@@ -5,117 +5,181 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Http; // For making HTTP requests to FastAPI
+use Illuminate\Support\Facades\Log; // For logging
+use Illuminate\Validation\ValidationException; // For validation errors
 
 class QuoteController extends Controller
 {
     /**
-     * Display the Quote of the Day.
+     * Display the Quote of the Day UI.
+     * This method is called when the user visits the root URL ('/').
      *
      * @return View
      */
     public function showQuote(): View
     {
-        // In a real application, you would call your Python script here
-        // For example:
-        // $command = 'python /path/to/your/quote_of_the_day_ai.py';
-        // $output = shell_exec($command);
-        // Then parse the $output to get the quote and author.
+        Log::info('Displaying Quote of the Day UI.');
 
-        // For this example, we'll simulate fetching a quote.
+        // Initial quote displayed when the page first loads.
+        // It's a placeholder before the user generates a new one via AJAX.
         $quote = [
-            'text' => 'The only way to do great work is to love what you do.',
-            'author' => 'Steve Jobs'
+            'text' => 'Welcome! Generate your first quote.',
+            'author' => 'AI System'
         ];
-
-        // You could also try to get a quote based on a topic
-        // $quote = $this->getQuoteFromPython('motivation'); // Example call
 
         return view('ui', compact('quote'));
     }
 
     /**
-     * (Optional) Get a new quote, possibly via AJAX.
-     * This method would be used if you want to update the quote dynamically
-     * without a full page reload.
+     * Get a new quote based on user input (topic and grade level) from FastAPI.
+     * This method is called via AJAX from the frontend using a GET request.
      *
-     * @param string|null $topic
+     * @param Request $request
      * @return JsonResponse
      */
     public function getNewQuote(Request $request): JsonResponse
     {
-        $topic = $request->query('topic');
+        Log::info('Processing GET request for new quote.', $request->all());
 
-        // Simulate fetching a new quote.
-        // In a real scenario, you'd execute your Python script with the topic.
-        // Example: $command = 'python /path/to/your/quote_of_the_day_ai.py --topic ' . escapeshellarg($topic);
-        // $output = shell_exec($command);
-        // Parse $output for quote and author.
-
-        if ($topic === 'innovation') {
-            $quote = [
-                'text' => 'Innovation distinguishes between a leader and a follower.',
-                'author' => 'Steve Jobs'
-            ];
-        } elseif ($topic === 'wisdom') {
-            $quote = [
-                'text' => 'The only true wisdom is in knowing you know nothing.',
-                'author' => 'Socrates'
-            ];
-        } else {
-            $quotes = [
-                ['text' => 'Believe you can and you\'re halfway there.', 'author' => 'Theodore Roosevelt'],
-                ['text' => 'The future belongs to those who believe in the beauty of their dreams.', 'author' => 'Eleanor Roosevelt'],
-                ['text' => 'It is during our darkest moments that we must focus to see the light.', 'author' => 'Aristotle']
-            ];
-            $quote = $quotes[array_rand($quotes)];
+        try {
+            // Validate incoming request data, similar to QuizmeController's processForm
+            $validatedData = $request->validate([
+                'topic' => 'nullable|string|max:255',
+                'grade_level' => 'nullable|string|max:255',
+            ]);
+        } catch (ValidationException $e) {
+            Log::error('Validation failed for getNewQuote: ' . $e->getMessage(), ['errors' => $e->errors()]);
+            return response()->json([
+                'error' => 'Validation failed: ' . $e->getMessage(),
+                'details' => $e->errors()
+            ], 422); // 422 Unprocessable Entity for validation errors
         }
 
-        return response()->json($quote);
+        $topic = $validatedData['topic'] ?? null;
+        $gradeLevel = $validatedData['grade_level'] ?? null;
+
+        // --- IMPORTANT: Set the correct URL for your FastAPI application ---
+        $fastApiUrl = env('FASTAPI_QOTD_URL', 'http://127.0.0.1:8001');
+        $endpoint = $fastApiUrl . '/quote';
+
+        $queryParams = [];
+        if ($topic) {
+            $queryParams['topic'] = $topic;
+        }
+        if ($gradeLevel) {
+            $queryParams['grade_level'] = $gradeLevel;
+        }
+
+        try {
+            Log::info('Making HTTP GET request to FastAPI for quote generation.', ['endpoint' => $endpoint, 'params' => $queryParams]);
+            $response = Http::timeout(60)->get($endpoint, $queryParams); // Set a timeout for the API request
+
+            if ($response->successful()) {
+                $quoteData = $response->json();
+                Log::info('Successfully received quote from FastAPI.', ['quote' => $quoteData]);
+                return response()->json([
+                    'text' => $quoteData['text'] ?? 'No quote text received.',
+                    'author' => $quoteData['author'] ?? 'Unknown'
+                ]);
+            } else {
+                // Log the error for debugging, including response body
+                $errorMessage = 'FastAPI request failed: ' . $response->status() . ' - ' . ($response->json()['detail'] ?? $response->body());
+                Log::error('FastAPI GET quote call failed: ' . $errorMessage);
+                return response()->json([
+                    'text' => 'AI service error: Could not retrieve quote.',
+                    'author' => 'AI System'
+                ], $response->status());
+            }
+
+        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+            Log::error('FastAPI connection error for GET quote: ' . $e->getMessage());
+            return response()->json([
+                'text' => 'AI service is unreachable. Please ensure the FastAPI server is running.',
+                'author' => 'System Error'
+            ], 503);
+        } catch (\Exception $e) {
+            Log::error('An unexpected error occurred while calling FastAPI for GET quote: ' . $e->getMessage());
+            return response()->json([
+                'text' => 'An unexpected error occurred. Please try again later.',
+                'author' => 'AI System'
+            ], 500);
+        }
     }
 
     /**
-     * Helper function to simulate calling the Python script.
-     * In a real application, this would execute the Python script
-     * and parse its output.
+     * Handles POST requests for quote generation (if your UI were to use a form submission).
+     * This method is a placeholder, mirroring the structure of processForm from QuizmeController.
      *
-     * @param string|null $topic
-     * @return array
+     * @param Request $request
+     * @return JsonResponse
      */
-    private function getQuoteFromPython(?string $topic = null): array
+    public function submitQuote(Request $request): JsonResponse
     {
-        // This is where you would execute the Python script.
-        // For example:
-        // $pythonScriptPath = base_path('path/to/your/quote_of_the_day_ai.py');
-        // $command = 'python ' . escapeshellarg($pythonScriptPath);
-        // if ($topic) {
-        //     $command .= ' --topic ' . escapeshellarg($topic); // Assuming your Python script accepts --topic argument
-        // }
-        // $output = shell_exec($command);
+        Log::info('Processing POST request for new quote.', $request->all());
 
-        // // Implement robust parsing of the Python script's output here
-        // // The Python script would ideally output JSON for easy parsing.
-        // $parsedOutput = json_decode($output, true);
-        // if (json_last_error() === JSON_ERROR_NONE && isset($parsedOutput['text'])) {
-        //     return [
-        //         'text' => $parsedOutput['text'],
-        //         'author' => $parsedOutput['author'] ?? 'Unknown'
-        //     ];
-        // }
-
-        // Fallback or simulated data
-        $simulatedQuotes = [
-            ['text' => 'The journey of a thousand miles begins with a single step.', 'author' => 'Lao Tzu'],
-            ['text' => 'Strive not to be a success, but rather to be of value.', 'author' => 'Albert Einstein'],
-            ['text' => 'The mind is everything. What you think you become.', 'author' => 'Buddha'],
-        ];
-
-        if ($topic) {
-            // Simple simulation for topic-based quotes
-            if ($topic === 'motivation') {
-                return ['text' => 'Motivation is what gets you started. Habit is what keeps you going.', 'author' => 'Jim Ryun'];
-            }
+        try {
+            // Validate incoming request data, similar to QuizmeController's processForm
+            $validatedData = $request->validate([
+                'topic' => 'nullable|string|max:255',
+                'grade_level' => 'nullable|string|max:255',
+                // Add other fields if your POST form sends them
+            ]);
+        } catch (ValidationException $e) {
+            Log::error('Validation failed for submitQuote: ' . $e->getMessage(), ['errors' => $e->errors()]);
+            return response()->json([
+                'error' => 'Validation failed: ' . $e->getMessage(),
+                'details' => $e->errors()
+            ], 422);
         }
 
-        return $simulatedQuotes[array_rand($simulatedQuotes)];
+        $topic = $validatedData['topic'] ?? null;
+        $gradeLevel = $validatedData['grade_level'] ?? null;
+
+        // --- IMPORTANT: Set the correct URL for your FastAPI application ---
+        $fastApiUrl = env('FASTAPI_QOTD_URL', 'http://127.0.0.1:8001');
+        $endpoint = $fastApiUrl . '/quote'; // Assuming FastAPI /quote endpoint supports POST
+
+        $postData = [];
+        if ($topic) {
+            $postData['topic'] = $topic;
+        }
+        if ($gradeLevel) {
+            $postData['grade_level'] = $gradeLevel;
+        }
+
+        try {
+            Log::info('Making HTTP POST request to FastAPI for quote generation.', ['endpoint' => $endpoint, 'data' => $postData]);
+            $response = Http::timeout(60)->post($endpoint, $postData); // Use post() for POST requests
+
+            if ($response->successful()) {
+                $quoteData = $response->json();
+                Log::info('Successfully received quote from FastAPI via POST.', ['quote' => $quoteData]);
+                return response()->json([
+                    'text' => $quoteData['text'] ?? 'No quote text received.',
+                    'author' => $quoteData['author'] ?? 'Unknown'
+                ]);
+            } else {
+                $errorMessage = 'FastAPI POST request failed: ' . $response->status() . ' - ' . ($response->json()['detail'] ?? $response->body());
+                Log::error('FastAPI POST quote call failed: ' . $errorMessage);
+                return response()->json([
+                    'text' => 'AI service error: Could not retrieve quote via POST.',
+                    'author' => 'AI System'
+                ], $response->status());
+            }
+
+        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+            Log::error('FastAPI connection error for POST quote: ' . $e->getMessage());
+            return response()->json([
+                'text' => 'AI service is unreachable. Please ensure the FastAPI server is running.',
+                'author' => 'System Error'
+            ], 503);
+        } catch (\Exception $e) {
+            Log::error('An unexpected error occurred while calling FastAPI for POST quote: ' . $e->getMessage());
+            return response()->json([
+                'text' => 'An unexpected error occurred. Please try again later.',
+                'author' => 'AI System'
+            ], 500);
+        }
     }
 }

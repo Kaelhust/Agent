@@ -7,7 +7,10 @@ from pydantic import BaseModel, Field
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware # For CORS if Laravel is on a different origin
 
-from langchain_community.llms import Ollama
+# --- FIX: Updated import for Ollama LLM ---
+from langchain_ollama import OllamaLLM # Use the new, dedicated Ollama LLM class
+# Old: from langchain_community.llms import Ollama
+
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
@@ -68,7 +71,8 @@ async def startup_event():
     """Initialize Ollama LLM on application startup."""
     global llm
     try:
-        llm = Ollama(model="gemma:2b")
+        # --- FIX: Use the new OllamaLLM class ---
+        llm = OllamaLLM(model="gemma:2b")
         print("Ollama (gemma:2b) initialized successfully.")
     except Exception as e:
         print(f"Error initializing Ollama: {e}")
